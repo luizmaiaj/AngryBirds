@@ -17,6 +17,10 @@ function Level:init()
     -- actual collision callbacks can cause stack overflow and other errors
     self.destroyedBodies = {}
 
+     -- aliens for combo
+     self.caliens = {}
+     self.combo = false -- to know if combo has been used
+ 
     -- define collision callbacks for our world; the World object expects four,
     -- one for different stages of any given collision
     function beginContact(a, b, coll)
@@ -26,6 +30,7 @@ function Level:init()
 
         -- if we collided between both an alien and an obstacle...
         if types['Obstacle'] and types['Player'] then
+            self.combo = true -- after contact combo cannot be used anymore
 
             -- destroy the obstacle if player's combined velocity is high enough
             if a:getUserData() == 'Obstacle' then
@@ -68,6 +73,7 @@ function Level:init()
 
         -- if we collided between the player and the alien...
         if types['Player'] and types['Alien'] then
+            self.combo = true -- after contact combo cannot be used anymore
 
             -- destroy the alien if player is traveling fast enough
             if a:getUserData() == 'Player' then
@@ -89,6 +95,12 @@ function Level:init()
 
         -- if we hit the ground, play a bounce sound
         if types['Player'] and types['Ground'] then
+            gSounds['bounce']:stop()
+            gSounds['bounce']:play()
+        end
+
+        -- if we hit the ground, play a bounce sound
+        if types['Player'] and types['Wall'] then
             gSounds['bounce']:stop()
             gSounds['bounce']:play()
         end
@@ -127,18 +139,24 @@ function Level:init()
     table.insert(self.aliens, Alien(self.world, 'square', VIRTUAL_WIDTH - 80, VIRTUAL_HEIGHT - TILE_SIZE - ALIEN_SIZE / 2, 'Alien'))
 
     -- spawn a few obstacles
-    table.insert(self.obstacles, Obstacle(self.world, 'vertical',
-        VIRTUAL_WIDTH - 120, VIRTUAL_HEIGHT - 35 - 110 / 2))
-    table.insert(self.obstacles, Obstacle(self.world, 'vertical',
-        VIRTUAL_WIDTH - 35, VIRTUAL_HEIGHT - 35 - 110 / 2))
-    table.insert(self.obstacles, Obstacle(self.world, 'horizontal',
-        VIRTUAL_WIDTH - 80, VIRTUAL_HEIGHT - 35 - 110 - 35 / 2))
+    table.insert(self.obstacles, Obstacle(self.world, 'vertical', VIRTUAL_WIDTH - 120, VIRTUAL_HEIGHT - 35 - 110 / 2))
+    table.insert(self.obstacles, Obstacle(self.world, 'vertical', VIRTUAL_WIDTH - 35, VIRTUAL_HEIGHT - 35 - 110 / 2))
+    table.insert(self.obstacles, Obstacle(self.world, 'horizontal', VIRTUAL_WIDTH - 80, VIRTUAL_HEIGHT - 35 - 110 - 35 / 2))
 
     -- ground data
     self.groundBody = love.physics.newBody(self.world, -VIRTUAL_WIDTH, VIRTUAL_HEIGHT - 35, 'static')
     self.groundFixture = love.physics.newFixture(self.groundBody, self.edgeShape)
     self.groundFixture:setFriction(0.5)
     self.groundFixture:setUserData('Ground')
+
+    -- walls
+    self.leftWallBody = love.physics.newBody(self.world, -VIRTUAL_WIDTH, 0, 'static')
+    self.rightWallBody = love.physics.newBody(self.world, 2 * VIRTUAL_WIDTH, 0, 'static')
+    self.wallShape = love.physics.newEdgeShape(0, 0, 0, VIRTUAL_HEIGHT)
+    self.leftWallFixture = love.physics.newFixture(self.leftWallBody, self.wallShape)
+    self.leftWallFixture:setUserData('Wall')
+    self.rightWallFixture = love.physics.newFixture(self.rightWallBody, self.wallShape)
+    self.rightWallFixture:setUserData('Wall')
 
     -- background graphics
     self.background = Background()
@@ -186,11 +204,39 @@ function Level:update(dt)
     if self.launchMarker.launched then
         local xPos, yPos = self.launchMarker.alien.body:getPosition()
         local xVel, yVel = self.launchMarker.alien.body:getLinearVelocity()
-        
+        local sumVel = math.abs(xVel) + math.abs(yVel)
+
+        -- spawn two more aliens if space is pressed
+        if love.keyboard.wasPressed('space') and self.combo == false then
+            self.combo = true
+            for i = 1, 2 do
+                local alien = Alien(self.world, 'round', xPos, yPos, 'Player')
+                alien.body:setLinearVelocity(xVel, yVel + (i == 1 and 10 or -10))
+                alien.fixture:setRestitution(0.4)
+                alien.body:setAngularDamping(1)
+                table.insert(self.caliens, alien)
+            end
+        end
+    
+        for k, alien in pairs(self.caliens) do
+            xVel, yVel = alien.body:getLinearVelocity()
+            local sumTemp = math.abs(xVel) + math.abs(yVel)
+            if sumTemp > sumVel then
+                sumVel = sumTemp
+            end
+        end
+
         -- if we fired our alien to the left or it's almost done rolling, respawn
-        if xPos < 0 or (math.abs(xVel) + math.abs(yVel) < 1.5) then
+        if xPos < 0 or (sumVel < 1.5) then
             self.launchMarker.alien.body:destroy()
             self.launchMarker = AlienLaunchMarker(self.world)
+
+            for k, alien in pairs(self.caliens) do
+                alien.body:destroy()
+            end
+
+            self.caliens = {}
+            self.combo = false
 
             -- re-initialize level if we have no more aliens
             if #self.aliens == 0 then
@@ -209,6 +255,10 @@ function Level:render()
     self.launchMarker:render()
 
     for k, alien in pairs(self.aliens) do
+        alien:render()
+    end
+
+    for k, alien in pairs(self.caliens) do -- render combo aliens
         alien:render()
     end
 
